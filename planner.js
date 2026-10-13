@@ -108,7 +108,7 @@
 
   // Samler alle bøger til en dagsplan og markerer dage, der er for tunge.
   function planKid({ kid, curricula, books, sessions, today }) {
-    const settings = { maxMinutesPerDay: 45, studyDays: DEFAULT_STUDY_DAYS, ...(kid.settings || {}) };
+    const settings = { maxMinutesPerDay: 120, studyDays: DEFAULT_STUDY_DAYS, ...(kid.settings || {}) };
     const kidSessions = sessions.filter((s) => s.kid_id === kid.id && !s.deleted);
     const p = pace(kidSessions);
     const byId = Object.fromEntries(curricula.map((c) => [c.id, c]));
@@ -120,7 +120,7 @@
         minPerPage: bookPace(b, kidSessions, p),
         today,
         studyDays: settings.studyDays,
-        readToday: kidSessions.some((s) => s.book_id === b.id && s.studied_at?.slice(0, 10) === today),
+        readToday: kidSessions.some((s) => s.book_id === b.id && s.studied_at && toIso(new Date(s.studied_at)) === today),
       }));
 
     const calendar = {};
