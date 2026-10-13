@@ -11,8 +11,8 @@
 
 (function (root) {
   const DB_NAME = "studieplan";
-  const DB_VERSION = 1;
-  const TABLES = ["kids", "curricula", "books", "sessions"];
+  const DB_VERSION = 2;
+  const TABLES = ["kids", "curricula", "books", "sessions", "day_rules"];
   const PAGE = 500;
   const OVERLAP_MS = 60_000;
 

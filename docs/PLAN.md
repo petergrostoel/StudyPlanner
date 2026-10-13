@@ -46,4 +46,13 @@ iPhone / pc (PWA)
 - Andre lektier end læsning (opgaver med anslået tid og frist).
 - Påmindelser som push-beskeder på telefonen.
 - Tag et billede af ugeplanen og lad AI foreslå bøger og frister.
-- Eget login til hvert barn, hvis børnene får egne telefoner.
+
+## Opdatering 13. oktober 2026
+
+- Pensum er nu fag og projekter (tabellen `curricula`) med en frist, hvor alt skal være læst.
+  En tekst kan have sin egen, tidligere frist. Den kan aldrig ligge efter fagets.
+- En tekst kan have flere sideintervaller (`books.ranges`). Titel og forfatter kan hentes ud fra ISBN.
+- Læsetid: hver dag er fuld, halv eller fri (`day_rules` + profilens normale uge). En fuld dag tæller 1
+  i fordelingen, en halv 0,5. Profilen sætter selv timer for fuld og halv dag (standard 4 og 2).
+  En dag er for tung, hvis der er planlagt mere, end dagstypen giver tid til.
+- Ingen forælder-visning: hver bruger har sin egen konto og ser kun sin egen plan.

@@ -1,6 +1,6 @@
 // Service worker: gør appen tilgængelig offline.
 // Hæv versionen når filerne ændres, så telefonen henter den nye udgave.
-const CACHE = "studieplan-v2";
+const CACHE = "studieplan-v3";
 const FILES = [
   "./",
   "index.html",

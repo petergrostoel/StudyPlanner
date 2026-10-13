@@ -156,3 +156,62 @@ input:focus { outline: 2px solid var(--pink); outline-offset: 1px; }
 .button svg, button svg, .check svg { width: 18px; height: 18px; flex-shrink: 0; }
 .fun svg { width: 22px; height: 22px; flex-shrink: 0; }
 .logo svg { width: 40px; height: 40px; color: #fff; }
+
+/* ---------- Læsetid: fuld, halv eller ingen ---------- */
+.tswatch { width: 18px; height: 6px; border-radius: 3px; flex-shrink: 0; display: inline-block; box-sizing: border-box; }
+.tswatch.t-full, .cal-day.t-full { background: var(--green); }
+.tswatch.t-half, .cal-day.t-half { background: #1F5A44; border: 1.5px solid var(--green); }
+.tswatch.t-none, .cal-day.t-none { background: #3A3A44; }
+.tchip { font-size: 12px; font-weight: 800; border-radius: 999px; padding: 4px 10px; white-space: nowrap; max-width: 55%; overflow: hidden; text-overflow: ellipsis; }
+.tchip.t-full { background: var(--green-bg); color: var(--green); }
+.tchip.t-half { background: var(--green-bg); color: #9FE6C6; }
+.tchip.t-none { background: var(--surface-2); color: var(--muted); }
+.daytype { display: flex; align-items: center; gap: 10px; border-radius: 14px; padding: 10px 12px; text-decoration: none; font-size: 14px; font-weight: 700; background: var(--green-bg); color: #9FE6C6; }
+.daytype.t-full { color: var(--green); }
+.daytype.t-none { background: var(--surface); color: var(--soft); }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+.cal-head, .cal, .week-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }
+.cal-head { text-align: center; font-size: 12px; font-weight: 700; color: var(--muted); }
+.cal-day { position: relative; height: 42px; min-height: 0; padding: 0; border-radius: 12px; font-size: 14px; font-weight: 800; color: var(--ink); }
+.cal-day.t-full { color: var(--bg); }
+.cal-day.t-none { color: var(--muted); background: var(--surface-2); }
+.cal-day:disabled { opacity: .35; }
+.cal-day.is-today { outline: 2px solid #fff; outline-offset: 1px; }
+.cal-day .dot { position: absolute; top: 4px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--pink); }
+
+.hours-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.hours-row:last-child { border-bottom: none; }
+.hours-out { min-width: 54px; text-align: center; font-size: 18px; font-weight: 800; }
+button.round { width: 40px; height: 40px; min-height: 0; padding: 0; border-radius: 50%; font-size: 20px; flex-shrink: 0; }
+button.round.ghosty { background: transparent; color: var(--muted); }
+.kicker-pink { font-size: 13px; font-weight: 800; letter-spacing: .6px; color: var(--pink-soft); }
+.rule-icon { width: 40px; height: 40px; border-radius: 12px; background: var(--surface-2); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 11px; font-weight: 800; color: var(--soft); }
+
+/* ---------- Fag og projekter ---------- */
+.pring { width: 50px; height: 50px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.pring > span { width: 40px; height: 40px; border-radius: 50%; background: var(--surface); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; }
+.kind { font-size: 11px; font-weight: 800; letter-spacing: .4px; color: var(--muted); border: 1px solid #3A3A44; border-radius: 6px; padding: 1px 6px; }
+.deadline-row { background: var(--surface-2); border-radius: 12px; padding: 8px 12px; color: var(--soft); }
+.hero { border-radius: 24px; padding: 18px; background: var(--grad); display: flex; flex-direction: column; gap: 8px; }
+.hero-title { font-size: 26px; font-weight: 800; letter-spacing: -.5px; }
+.icon-btn { width: 44px; height: 44px; padding: 0; border-radius: 14px; background: #fff; color: var(--bg); }
+.icon-link { width: 44px; height: 44px; display: flex; align-items: center; color: var(--ink); }
+.icon-link svg { width: 26px; height: 26px; }
+button.link { background: none; color: var(--pink); padding: 0; }
+
+/* ---------- Formularer ---------- */
+.label { font-size: 14px; color: var(--muted); }
+.seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.seg.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.seg label { display: block; }
+.seg input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.seg span { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 52px; border-radius: 16px; border: 2px solid var(--line); background: var(--surface); color: var(--ink); font-weight: 800; font-size: 15px; cursor: pointer; text-align: center; padding: 4px; }
+.seg small { font-size: 12px; font-weight: 600; color: var(--muted); }
+.seg input:checked + span { border-color: var(--pink); }
+.seg input:focus-visible + span { outline: 2px solid var(--pink); outline-offset: 2px; }
+.range-row { display: flex; align-items: center; gap: 8px; background: var(--surface); border-radius: 16px; padding: 4px 6px 4px 12px; }
+.range-row input { width: 76px; text-align: center; padding: 8px 6px; }
+.stepper input { width: 84px; text-align: center; font-size: 26px; font-weight: 800; padding: 4px; }
+.tabbar .me.on { outline: 2px solid #fff; outline-offset: 1px; }
