@@ -56,3 +56,13 @@ iPhone / pc (PWA)
   i fordelingen, en halv 0,5. Profilen sætter selv timer for fuld og halv dag (standard 4 og 2).
   En dag er for tung, hvis der er planlagt mere, end dagstypen giver tid til.
 - Ingen forælder-visning: hver bruger har sin egen konto og ser kun sin egen plan.
+
+## Opdatering 13. oktober 2026, version 4
+
+- Planen fordeler ikke længere hver tekst jævnt. Teksten med tidligste frist læses først, og hver dag fyldes
+  op til 90 % af læsetiden. Rækker 90 % ikke til at nå fristerne, bruges hele læsetiden.
+- Tidskontrol: for hver frist sammenlignes læsetiden fra i dag til fristen med alt det, der skal læses til og
+  med fristen, plus 10 % buffer. Grøn: læsetid ≥ behov + 10 %. Gul: læsetid ≥ behov. Rød: læsetid < behov.
+- "Jeg når ikke at læse i dag" gemmer en undtagelse (ingen læsetid) for dagen og viser konsekvensen først.
+- "Siden sidst": profilen husker sidste besøg (`settings.lastSeen`). Læsedage siden da uden registreret
+  læsning gennemgås én ad gangen.

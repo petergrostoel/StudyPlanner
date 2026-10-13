@@ -215,3 +215,26 @@ button.link { background: none; color: var(--pink); padding: 0; }
 .range-row input { width: 76px; text-align: center; padding: 8px 6px; }
 .stepper input { width: 84px; text-align: center; font-size: 26px; font-weight: 800; padding: 4px; }
 .tabbar .me.on { outline: 2px solid #fff; outline-offset: 1px; }
+
+/* ---------- Tidskontrol: grøn, gul, rød ---------- */
+.s-ok { --s: var(--green); --s-bg: var(--green-bg); }
+.s-tight { --s: var(--amber); --s-bg: var(--amber-bg); }
+.s-short { --s: var(--red); --s-bg: #2A0E14; }
+.sdot { width: 10px; height: 10px; border-radius: 50%; background: var(--s, var(--muted)); flex-shrink: 0; display: inline-block; }
+.sdot.s-ok, .sdot.s-tight, .sdot.s-short { background: var(--s); }
+.status { display: flex; align-items: center; gap: 10px; border-radius: 14px; padding: 10px 12px; text-decoration: none; font-size: 14px; background: var(--s-bg); color: var(--s); }
+.status strong { font-weight: 800; }
+.status > .small { color: var(--soft); opacity: .8; white-space: nowrap; }
+.checkcard { display: flex; flex-direction: column; gap: 8px; border-radius: 18px; padding: 14px; background: var(--s-bg); }
+.checkcard > .row strong { color: var(--s); letter-spacing: .4px; }
+.cbar { position: relative; height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.cbar > span { position: absolute; top: 0; bottom: 0; left: 0; }
+.cbar .need { background: var(--muted); }
+.cbar .buf { background: repeating-linear-gradient(45deg, #71717A 0 4px, #3A3A44 4px 8px); }
+.cbar .cap { background: var(--s, var(--grad)); }
+.fill { display: flex; flex-direction: column; gap: 4px; }
+.fill .cbar { height: 8px; }
+.idea { justify-content: space-between; border-radius: 14px; border: 2px solid var(--line); background: var(--surface); font-size: 14px; text-align: left; padding: 8px 12px; }
+.idea.on { border-color: var(--green); }
+.idea > span:last-child { color: var(--green); }
+button.link.muted-link { color: var(--muted); font-weight: 600; font-size: 14px; text-decoration: underline; text-underline-offset: 3px; align-self: flex-start; min-height: 32px; }

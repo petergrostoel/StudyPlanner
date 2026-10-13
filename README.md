@@ -13,7 +13,10 @@ Design og klikbar mockup: https://claude.ai/artifact/TspZ3FAYPHyMnWPK5SQurT
 - **To slags frister:** fagets frist gælder alle tekster. En tekst kan have sin egen, tidligere frist, men aldrig en senere.
 - **Læsetid:** hver dag er en fuld, halv eller fri læsedag. Man sætter en normal uge, faste ugedage i en periode (fx forelæsning hver tirsdag), perioder (fx ferie) og enkelte dage. Hver profil bestemmer selv, hvor mange timer en fuld og en halv dag er.
 - **Læsefart:** efter hver læsning skriver man bare, hvilken side man nåede til, og hvor længe man læste (fokus-timeren udfylder tiden). Appen udregner farten i minutter pr. side ud fra de seneste læsninger.
-- **Planen retter sig selv:** resten af hver tekst fordeles på læsedagene frem til fristen. En fuld dag tæller 1, en halv dag 0,5 og en fri dag 0. Læser man langsommere eller hurtigere end ventet, ændres planen med det samme.
+- **Planen retter sig selv:** teksten med tidligste frist læses først, og hver dag fyldes op til 90 % af dens læsetid. En tekst bliver altså læst færdig så tidligt som muligt. Læser man langsommere eller hurtigere end ventet, ændres planen med det samme.
+- **Tidskontrol med buffer:** appen regner hele tiden, frist for frist, om læsetiden rækker til alt der skal læses plus 10 % buffer. Status er grøn (God plads), gul (Tæt på: bufferen er spist) eller rød (Ikke nok tid).
+- **Aflys i dag:** "Jeg når ikke at læse i dag" gør dagen fri, viser hvad det betyder for tiden og foreslår dage, der kan få mere læsetid.
+- **Siden sidst:** har der været læsedage, siden appen sidst var åben, spørger den om man fik læst (ja, noget eller nej) og retter planen.
 - **Streaks:** antal dage i træk med læsning, som på de sociale medier.
 - **Kun din egen:** hver bruger logger ind med sin egen konto og ser kun sin egen plan.
 - **Virker offline:** alle data ligger i en database på telefonen (IndexedDB) og synkroniseres med Supabase, når der er net.

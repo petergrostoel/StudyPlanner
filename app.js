@@ -27,6 +27,7 @@ const db = supabase.createClient(supabaseUrl, supabaseKey);
 
 let user = null;
 let timer = null; // { bookId, startedAt, elapsed }
+let synced = false; // første synkronisering er gået igennem (eller har fejlet)
 
 const today = () => Planner.toIso(new Date());
 
@@ -86,14 +87,62 @@ const subjectOf = (book) => (book?.curriculum_id ? Store.get("curricula", book.c
 const settingsOf = (kid) => Planner.settingsOf(kid);
 
 function planFor(kid) {
+  return planWith(kid);
+}
+
+// Planen, som den ville se ud med andre tekster, læsninger eller regler
+// (bruges til at vise konsekvensen, før noget gemmes).
+function planWith(kid, { books, sessions, rules, day } = {}) {
   return Planner.planKid({
     kid,
     curricula: Store.all("curricula"),
-    books: Store.all("books"),
-    sessions: Store.all("sessions"),
-    rules: Store.all("day_rules"),
-    today: today(),
+    books: books ?? Store.all("books"),
+    sessions: sessions ?? Store.all("sessions"),
+    rules: rules ?? Store.all("day_rules"),
+    today: day ?? today(),
   });
+}
+
+// ---------- Tidskontrol: grøn, gul eller rød ----------
+
+const CHECK = {
+  ok: { label: "God plads", cls: "s-ok" },
+  tight: { label: "Tæt på", cls: "s-tight" },
+  short: { label: "Ikke nok tid", cls: "s-short" },
+};
+
+function checkText(check) {
+  const w = check.worst;
+  if (!w) return "ingen frister at holde øje med";
+  if (check.status === "ok") return `${formatHours(w.spare)} luft før ${shortDate(w.deadline)}`;
+  if (check.status === "tight") return `find ${formatHours(w.need + w.buffer - w.capacity)} ekstra før ${shortDate(w.deadline)}`;
+  return `mangler ${formatHours(Math.max(1, w.need - w.capacity))} før ${shortDate(w.deadline)}`;
+}
+
+function statusPill(kid, check) {
+  const c = CHECK[check.status];
+  return `<a class="status ${c.cls}" href="#/kid/${kid.id}/time"><span class="sdot"></span><span class="grow"><strong>${c.label}</strong> · ${checkText(check)}</span><span class="small">Læsetid ›</span></a>`;
+}
+
+// To bjælker: behov + buffer mod læsetiden i kalenderen frem til fristen.
+function checkCard(check) {
+  const w = check.worst;
+  const c = CHECK[check.status];
+  if (!w) return `<div class="checkcard ${c.cls}"><div class="row"><span class="sdot"></span><strong class="grow">${c.label}</strong></div><span class="small">Ingen frister at holde øje med.</span></div>`;
+  const max = Math.max(w.capacity, w.need + w.buffer) * 1.05 || 1;
+  const pct = (m) => `${Math.max(0, Math.round((m / max) * 100))}%`;
+  const text = {
+    ok: `Der er tid nok, også med 10 % buffer til nye tekster og aflysninger.`,
+    tight: `Du når det, men bufferen er spist. Find ${formatHours(w.need + w.buffer - w.capacity)} ekstra læsetid, så der er luft.`,
+    short: `Læsetiden rækker ikke. Du mangler ${formatHours(Math.max(1, w.need - w.capacity))} plus buffer. Gør fri dage til halve eller halve til fulde.`,
+  }[check.status];
+  return `<div class="checkcard ${c.cls}">
+    <div class="row"><span class="sdot"></span><strong class="grow">${c.label}</strong><span class="small muted">frem til ${shortDate(w.deadline)}</span></div>
+    <div class="cbar"><span style="width:${pct(w.need)}" class="need"></span><span style="left:${pct(w.need)};width:${pct(w.buffer)}" class="buf"></span></div>
+    <div class="cbar"><span style="width:${pct(w.capacity)}" class="cap"></span></div>
+    <div class="row small muted" style="justify-content:space-between"><span>Behov ${formatHours(w.need)} + buffer ${formatHours(w.buffer)}</span><span>Læsetid ${formatHours(w.capacity)}</span></div>
+    <span class="small">${text}</span>
+  </div>`;
 }
 
 // Fast farve pr. fag (egen farve, ellers ud fra id'et, så den er ens på alle enheder).
@@ -183,6 +232,7 @@ function render() {
     else if (view === "time") app.innerHTML = timeView(kid, r.extra);
     else if (view === "me") app.innerHTML = meView(kid);
     else app.innerHTML = todayView(kid);
+    if (synced && view !== "focus") maybeCatchup(kid);
     return;
   }
   renderTabbar(null);
@@ -307,7 +357,7 @@ function todayView(kid) {
       <span class="swatch" style="background:${bookColor(b)}"></span>
       <a class="grow" style="text-decoration:none;color:inherit" href="#/kid/${kid.id}/focus/${b.id}">
         <strong style="${isDone ? "text-decoration:line-through;color:var(--muted)" : ""}">${escapeHtml(b.title)}</strong>
-        <p class="muted small">s. ${Planner.piecesText(i.pieces)} · ${i.minutes} min${sub ? " · " + escapeHtml(sub.title) : ""}</p>
+        <p class="muted small">s. ${Planner.piecesText(i.pieces)} · ${formatMinutes(i.minutes)}${sub ? " · " + escapeHtml(sub.title) : ""}</p>
       </a>
       <a class="check button" href="#/kid/${kid.id}/focus/${b.id}" aria-label="${isDone ? "Læst" : "Start"} ${escapeHtml(b.title)}" ${isDone ? 'aria-pressed="true"' : ""}>${isDone ? "✓" : icon("play")}</a>
     </div>`;
@@ -327,23 +377,25 @@ function todayView(kid) {
       <span class="grow">${TYPES[type].label} i dag${info.rule?.label ? " · " + escapeHtml(info.rule.label) : ""}</span>
       ${type !== "none" ? `<span class="muted">op til ${formatHours(plan.today.capacity)}</span>` : ""}
     </a>
+    ${plan.check.worst ? statusPill(kid, plan.check) : ""}
     ${stories ? `<div class="stories">${stories}</div>` : ""}
 
     ${next ? `<div class="next"><div>
       <span class="kicker">${escapeHtml(kicker)}</span>
       <div><div class="title">${escapeHtml(nextBook.title)}</div>
-        <p class="muted">s. ${Planner.piecesText(next.pieces)} · ca. ${next.minutes} min med din fart</p>
+        <p class="muted">s. ${Planner.piecesText(next.pieces)} · ca. ${formatMinutes(next.minutes)} med din fart</p>
         ${nextSubject?.deadline ? `<p class="small" style="color:#71717A">Hele ${escapeHtml(nextSubject.title)} læst senest ${deadlineLabel(nextSubject).toLowerCase()} ${shortDate(nextSubject.deadline)}</p>` : ""}</div>
       <a class="button dark" style="align-self:flex-start;padding:12px 22px" href="#/kid/${kid.id}/focus/${nextBook.id}">${icon("play")} Start</a>
+      <button class="link muted-link" data-action="cancel-today" data-kid="${kid.id}">Jeg når ikke at læse i dag</button>
     </div></div>` : items.length ? `<div class="ok-box"><strong>Alt er læst i dag.</strong> Resten af dagen er din.</div>` : ""}
 
-    ${plan.atRisk ? `<div class="warn-box small">Planen er stram lige nu. Gør en halv dag til en fuld under Læsetid, eller flyt en frist.</div>` : ""}
 
     <div class="row" style="justify-content:space-between"><span class="section-title">I dag</span>${items.length ? `<span class="muted small">${done} af ${items.length} klaret</span>` : ""}</div>
     ${rows.join("") || (type === "none"
       ? '<div class="fun">Ingen læsetid i dag. Nyd det.</div>'
       : booksOf(kid.id).length ? '<p class="muted">Ingen læsning planlagt i dag.</p>'
       : `<a class="button primary" href="#/kid/${kid.id}/books">Tilføj dit første fag</a>`)}
+    ${type !== "none" && !next && plan.check.worst ? `<button class="link muted-link" data-action="cancel-today" data-kid="${kid.id}">Jeg når ikke at læse i dag</button>` : ""}
     ${type !== "none" ? `<div class="fun row">${icon("lock")}<span>Fri fra ${s.freeFrom}. Ingen læsning her.</span></div>` : ""}`;
 }
 
@@ -355,13 +407,14 @@ function weekView(kid) {
   for (let i = 0; i < 7; i++) {
     const d = Planner.addDays(today(), i);
     const info = Planner.dayTypeInfo(d, rules, s.week);
-    const entry = plan.days.find((x) => x.date === d) ?? { date: d, minutes: 0, items: [] };
+    const entry = plan.days.find((x) => x.date === d) ?? { date: d, minutes: 0, items: [], used: d === today() ? plan.usedToday : 0 };
     days.push({ ...entry, type: info.type, rule: info.rule, capacity: Planner.capacityMinutes(info.type, s) });
   }
   const total = days.reduce((n, d) => n + d.minutes, 0);
   return `
     <div class="row"><h1 class="grow">Ugen</h1>
       <a class="button" href="#/kid/${kid.id}/time">${icon("clock", 2.2)} Læsetid</a></div>
+    ${plan.check.worst ? statusPill(kid, plan.check) : ""}
     <div class="card"><strong>${formatMinutes(total)}</strong> læsning de næste 7 dage · læsefart ca. ${formatPace(plan.pace)}</div>
     ${legend()}
     ${days.map((d) => `
@@ -370,14 +423,22 @@ function weekView(kid) {
         <span class="section-label grow" style="margin:0">${longDate(d.date)}${d.date === today() ? " · i dag" : ""}</span>
         ${typeChip(d.type, d.rule?.label)}
       </div>
-      ${d.tooMuch ? `<p class="small" style="color:var(--amber)">${formatMinutes(d.minutes)} planlagt, men der er kun ${formatHours(d.capacity)} denne dag.</p>` : ""}
+      ${d.capacity ? fillBar(d) : ""}
       ${d.items.length ? d.items.map((i) => {
         const b = Store.get("books", i.bookId);
         const sub = subjectOf(b);
         return `<div class="card item"><span class="swatch" style="background:${bookColor(b)}"></span>
           <div class="grow"><strong>${escapeHtml(b.title)}</strong><p class="muted small">s. ${Planner.piecesText(i.pieces)}${sub ? " · " + escapeHtml(sub.title) : ""}</p></div>
-          <span class="muted small">${i.minutes} min</span></div>`;
+          <span class="muted small">${formatMinutes(i.minutes)}</span></div>`;
       }).join("") : `<div class="fun">${d.type === "none" ? "Fri" : "Intet planlagt"}</div>`}`).join("")}`;
+}
+
+// Hvor meget af dagens læsetid der er fyldt op. De sidste 10 % er buffer.
+function fillBar(d) {
+  const used = (d.used || 0) + d.minutes;
+  const pct = Math.min(100, Math.round((used / d.capacity) * 100));
+  return `<div class="fill"><div class="cbar"><span class="cap" style="width:${pct}%;background:${used > d.capacity ? "var(--red)" : "var(--grad)"}"></span><span class="buf" style="left:90%;width:10%"></span></div>
+    <span class="small muted">Fyldt ${formatMinutes(used)} af ${formatHours(d.capacity)}${used > d.capacity ? " · mere end der er tid til" : used > d.capacity * Planner.FILL + 1 ? " · bufferen er i brug" : " · de sidste 10 % er buffer"}</span></div>`;
 }
 
 function legend() {
@@ -385,9 +446,9 @@ function legend() {
 }
 
 const STATUS = {
-  ok: { text: "På sporet", color: "var(--green)" },
-  tight: { text: "Stramt", color: "var(--amber)" },
-  late: { text: "Fristen er nået", color: "var(--amber)" },
+  ok: { text: "God plads", color: "var(--green)" },
+  tight: { text: "Tæt på", color: "var(--amber)" },
+  short: { text: "Ikke nok tid", color: "var(--red)" },
   done: { text: "Læst", color: "var(--green)" },
   none: { text: "Sæt en frist", color: "var(--muted)" },
 };
@@ -408,11 +469,12 @@ function booksView(kid) {
       <div class="stat"><span class="muted small">Din læsefart</span><strong style="color:var(--cyan)">${formatNum(plan.pace.minPerPage)} min</strong>
         <span class="muted small">pr. side · ${plan.pace.measured ? `målt ${plan.pace.samples} ${plan.pace.samples === 1 ? "gang" : "gange"}` : "gæt, til der er målt"}</span></div>
     </div>
-    <span class="section-title">Fag og projekter</span>
+    ${plan.check.worst ? statusPill(kid, plan.check) : ""}
+    <div class="row" style="justify-content:space-between"><span class="section-title">Fag og projekter</span><span class="muted small">status: tid mod behov + 10 %</span></div>
     ${subjects.map((sub) => {
       const st = Planner.subjectStatus(sub.id, books, plan);
       const pct = st.total ? Math.round((st.read / st.total) * 100) : 0;
-      const status = !sub.deadline && st.status !== "done" ? STATUS.none : STATUS[st.status];
+      const status = STATUS[st.status];
       return `<a class="card stack" style="text-decoration:none" href="#/kid/${kid.id}/subject/${sub.id}">
         <div class="row">
           <span class="pring" style="background:conic-gradient(${subjectColor(sub)} ${pct * 3.6}deg, var(--line) 0)"><span>${pct}%</span></span>
@@ -450,13 +512,8 @@ function bookStatus(book, plan) {
   if (plan.status === "no-deadline") return "Sæt en frist for at få en plan";
   const at = book.current_page != null ? `Læst til s. ${book.current_page} · ` : "Ikke startet · ";
   if (plan.status === "late") return `${at}Fristen er nået: ${plan.remaining} sider mangler`;
-  return `${at}${plan.remaining} sider tilbage · ca. ${perFullDay(plan)} min på fulde dage`;
-}
-
-// Minutter på en fuld dag, når en halv dag tæller det halve.
-function perFullDay(plan) {
-  const weight = plan.days.reduce((n, d) => n + (Planner.WEIGHT[d.dayType] || 0), 0);
-  return weight ? Math.round(plan.totalMinutes / weight) : plan.totalMinutes;
+  if (plan.status === "short") return `${at}${plan.remaining} sider tilbage · når det ikke til fristen med den læsetid, du har`;
+  return `${at}${plan.remaining} sider tilbage · læst færdig ${shortDate(plan.finish)}`;
 }
 
 function subjectView(kid, subjectId) {
@@ -466,14 +523,7 @@ function subjectView(kid, subjectId) {
   const books = booksOf(kid.id);
   const st = Planner.subjectStatus(sub.id, books, plan);
   const pct = st.total ? Math.round((st.read / st.total) * 100) : 0;
-  // Samlet tid tilbage fordelt på læsedagene frem til fagets frist.
-  let perDay = "";
-  if (sub.deadline && st.status !== "done") {
-    const minutes = plan.plans.filter((p) => st.books.some((b) => b.id === p.bookId)).reduce((n, p) => n + p.totalMinutes, 0);
-    let weight = 0;
-    for (let d = today(); d <= sub.deadline; d = Planner.addDays(d, 1)) weight += Planner.WEIGHT[plan.typeOf(d)];
-    perDay = weight ? `ca. ${Math.round(minutes / weight)} min pr. fuld læsedag` : "ingen læsedage tilbage";
-  }
+  const perDay = st.status === "done" ? "alt er læst" : st.finish ? `læst færdig ${shortDate(st.finish)}` : "";
   return `
     <div class="row"><a href="#/kid/${kid.id}/books" class="icon-link" aria-label="Tilbage">${icon("back", 2.2)}</a>
       <strong class="grow" style="text-align:center">${sub.kind === "projekt" ? "Projekt" : "Fag"}</strong>
@@ -484,6 +534,7 @@ function subjectView(kid, subjectId) {
       <div class="bar" style="background:rgb(255 255 255 / .3)"><span style="width:${pct}%;background:#fff"></span></div>
       <div class="row small" style="justify-content:space-between;font-weight:600"><span>${st.read} af ${st.total} sider</span><span>${perDay}</span></div>
     </div>
+    ${st.check ? statusPill(kid, { status: st.status, worst: st.check }) : ""}
     <div class="row" style="justify-content:space-between"><span class="section-title">Tekster</span>
       <button class="link" data-action="edit-book" data-kid="${kid.id}" data-subject="${sub.id}">+ Tilføj tekst</button></div>
     ${st.books.map((b) => bookCard(kid, b, plan)).join("") || '<p class="muted">Ingen tekster endnu.</p>'}
@@ -538,6 +589,8 @@ function timeView(kid, monthArg) {
 
   return `
     <div class="row"><a href="#/kid/${kid.id}/week" class="icon-link" aria-label="Tilbage">${icon("back", 2.2)}</a><h1 class="grow">Læsetid</h1></div>
+
+    ${checkCard(planFor(kid).check)}
 
     <div class="card stack" style="gap:4px">
       <div class="row" style="justify-content:space-between"><span class="kicker-pink">${escapeHtml(kid.name.toUpperCase())}S LÆSETID</span><span class="muted small">kun din profil</span></div>
@@ -825,21 +878,19 @@ function bookSheet(kid, book, presetSubject) {
     const total = b.ranges.length ? Planner.totalPages(b) : 0;
     $("#range-total").textContent = total ? `${total} sider i alt` : "";
     if (!total) return (el.textContent = "Skriv første og sidste side.");
-    const kidPlan = planFor(kid);
-    const minPerPage = kidPlan.pace.minPerPage;
-    const plan = Planner.planBook(b, { curriculum: sub, minPerPage, today: today(), typeOf: kidPlan.typeOf });
+    // Planen med den nye eller rettede tekst sammen med alle de andre.
+    const others = Store.all("books").filter((x) => x.id !== b.id);
+    const kidPlan = planWith(kid, { books: [...others, b] });
+    const plan = kidPlan.plans.find((x) => x.bookId === b.id);
     const later = b.deadline && sub?.deadline && b.deadline > sub.deadline ? ` Egen frist kan ikke ligge efter fagets, så ${shortDate(sub.deadline)} gælder.` : "";
     if (plan.status === "no-deadline") return (el.textContent = `${plan.remaining} sider er ca. ${formatMinutes(plan.totalMinutes)}. Vælg et fag med frist eller sæt en egen frist for at få en plan.`);
     if (plan.status === "done") return (el.textContent = "Teksten er læst færdig.");
     if (plan.status === "late") return (el.textContent = "Fristen er allerede nået." + later);
-    let full = 0, half = 0;
-    for (let d = today(); d <= plan.deadline; d = Planner.addDays(d, 1)) {
-      const t = kidPlan.typeOf(d);
-      if (t === "full") full++;
-      if (t === "half") half++;
-    }
-    const perFull = perFullDay(plan);
-    el.innerHTML = `${plan.remaining} sider med ${formatPace(kidPlan.pace)} er ca. <strong>${formatMinutes(plan.totalMinutes)}</strong>. Frem til ${shortDate(plan.deadline)} har du ${full} fulde og ${half} halve læsedage. Det bliver <strong>ca. ${perFull} min på fulde dage og ${Math.round(perFull / 2)} på halve</strong>.${escapeHtml(later)}`;
+    const when = plan.status === "short"
+      ? `<strong>Den kan ikke nås til ${shortDate(plan.deadline)}</strong> med den læsetid, du har.`
+      : `Med dine andre tekster og din læsetid bliver den <strong>læst færdig ${shortDate(plan.finish)}</strong> (frist ${shortDate(plan.deadline)}).`;
+    el.innerHTML = `${plan.remaining} sider med ${formatPace(kidPlan.pace)} er ca. <strong>${formatMinutes(plan.totalMinutes)}</strong>. ${when}${escapeHtml(later)}
+      <span class="row" style="margin-top:6px;gap:8px"><span class="sdot ${CHECK[kidPlan.check.status].cls}"></span><span><strong>${CHECK[kidPlan.check.status].label}</strong> · ${checkText(kidPlan.check)}</span></span>`;
   };
 
   drawRanges();
@@ -996,13 +1047,13 @@ function logSheet(kid, book) {
     $("#minutes").value = minutes;
     const pages = Planner.pagesBetween(book, start, reached);
     const session = { kid_id: kid.id, book_id: book.id, start_page: start, end_page: reached, pages, minutes, studied_at: new Date().toISOString() };
-    const after = Planner.pace([...Store.all("sessions", (s) => s.kid_id === kid.id), session]);
-    const plan = Planner.planBook({ ...book, current_page: reached }, {
-      curriculum: sub, minPerPage: after.minPerPage, today: today(), typeOf: kidPlan.typeOf, readToday: true,
+    const afterPlan = planWith(kid, {
+      sessions: [...Store.all("sessions"), session],
+      books: Store.all("books").map((x) => (x.id === book.id ? { ...x, current_page: reached } : x)),
     });
-    const settings = settingsOf(kid);
-    const tight = plan.status === "late" || plan.days.some((d) => d.minutes > Planner.capacityMinutes(d.dayType, settings));
-    const perFull = perFullDay(plan);
+    const after = afterPlan.pace;
+    const plan = afterPlan.plans.find((x) => x.bookId === book.id);
+    const tight = afterPlan.check.status !== "ok";
     const deadline = plan.deadline;
     const ownEarlier = deadline && sub?.deadline && deadline < sub.deadline;
     const where = deadline ? (ownEarlier ? `din egen frist ${shortDate(deadline)}` : `${sub ? deadlineLabel(sub).toLowerCase() : "fristen"} ${shortDate(deadline)}`) : "";
@@ -1016,10 +1067,11 @@ function logSheet(kid, book) {
       <div class="${tight ? "warn-box" : "ok-box"} stack" style="margin-top:10px">
         ${plan.status === "done" ? "<strong>Teksten er læst færdig!</strong>"
           : plan.status === "no-deadline" ? `Der mangler ${plan.remaining} sider. Sæt en frist for at få en plan.`
-          : `<span>Resten (${plan.remaining} sider fra s. ${next}) bliver <strong>ca. ${perFull} min på fulde dage</strong> og ${Math.round(perFull / 2)} på halve, frem til ${where}.</span>
-             <span>${tight
-               ? `Det bliver stramt før ${where}. Gør en halv dag til en fuld under Læsetid, eller flyt noget fra en anden tekst.`
-               : `Du når det før ${where}${ownEarlier ? `, og ${escapeHtml(sub.title)} er på sporet til ${deadlineLabel(sub).toLowerCase()} ${shortDate(sub.deadline)}` : ""}. Fritiden er ikke rørt.`}</span>`}
+          : plan.status === "short" || plan.status === "late"
+            ? `<span>Resten (${plan.remaining} sider fra s. ${next}) <strong>kan ikke nås til ${where}</strong> med den læsetid, du har.</span>
+               <span>Gør fri dage til halve eller halve til fulde under Læsetid.</span>`
+            : `<span>Resten (${plan.remaining} sider fra s. ${next}) bliver <strong>læst færdig ${shortDate(plan.finish)}</strong>, før ${where}.</span>
+               <span><strong>${CHECK[afterPlan.check.status].label}</strong> · ${checkText(afterPlan.check)}.${ownEarlier && !tight ? ` ${escapeHtml(sub.title)} skal være læst til ${deadlineLabel(sub).toLowerCase()} ${shortDate(sub.deadline)}.` : ""}</span>`}
       </div>`;
   };
   show();
@@ -1049,6 +1101,187 @@ function logSheet(kid, book) {
     go(`#/kid/${kid.id}/today`);
     render();
   });
+}
+
+// ============================================================
+// Aflys i dag: hvad betyder det for tiden, og hvor kan den findes?
+// ============================================================
+
+// Regler der kun lever i arket, til at vise konsekvensen før noget gemmes.
+const draftRule = (kid, date, type) => ({ id: "kladde-" + date, kid_id: kid.id, kind: "day", from_date: date, day_type: type, updated_at: "9999" });
+
+function cancelSheet(kid) {
+  const t = today();
+  const rules = Store.all("day_rules");
+  const s = settingsOf(kid);
+  const before = planFor(kid);
+  const cancel = draftRule(kid, t, "none");
+  const afterCancel = planWith(kid, { rules: [...rules, cancel] });
+  // Forslag: de næste dage frem til den strammeste frist, der kan få mere læsetid.
+  const until = afterCancel.check.worst?.deadline ?? Planner.addDays(t, 21);
+  const ideas = [];
+  for (let d = Planner.addDays(t, 1); d <= until && ideas.length < 4; d = Planner.addDays(d, 1)) {
+    const type = afterCancel.typeOf(d);
+    if (type !== "full") ideas.push({ date: d, from: type, to: type === "none" ? "half" : "full" });
+  }
+  const picked = new Set();
+  const planned = before.today.minutes;
+
+  openSheet(`
+    <h2>Når du ikke at læse i dag?</h2>
+    <p class="muted small">${longDate(t)} har ${TYPES[before.today.dayType].label.toLowerCase()} (${formatHours(before.today.capacity)}).${planned ? ` Planlagt: ${formatMinutes(planned)}.` : ""} Dagen bliver fri, og planen flyttes.</p>
+    <div id="cancel-check"></div>
+    <div id="cancel-ideas" class="stack" style="gap:8px"></div>
+    <div class="row"><button type="button" class="grow" data-action="close">Fortryd</button><button class="primary grow" id="cancel-save">Aflys i dag</button></div>`);
+
+  const draw = () => {
+    const extra = [...picked].map((i) => draftRule(kid, ideas[i].date, ideas[i].to));
+    const after = planWith(kid, { rules: [...rules, cancel, ...extra] });
+    $("#cancel-check").innerHTML = checkCard(after.check);
+    const show = after.check.status !== "ok" || picked.size;
+    $("#cancel-ideas").innerHTML = show && ideas.length ? `
+      <span class="section-label" style="margin:0">Forslag til ny læsetid</span>
+      ${ideas.map((idea, i) => `<button type="button" class="idea ${picked.has(i) ? "on" : ""}" data-idea="${i}" aria-pressed="${picked.has(i)}">
+        <span class="grow">${shortDate(idea.date)}: ${TYPES[idea.from].short.toLowerCase()} → ${TYPES[idea.to].short.toLowerCase()} (+${formatHours(Planner.capacityMinutes(idea.to, s) - Planner.capacityMinutes(idea.from, s))})</span>
+        <span>${picked.has(i) ? "Tilføjet" : "+"}</span></button>`).join("")}` : "";
+    const btn = $("#cancel-save");
+    btn.textContent = after.check.status === "ok" ? (picked.size ? "Aflys og tilføj tid" : "Aflys i dag") : "Aflys alligevel";
+    btn.className = after.check.status === "ok" ? "primary grow" : "grow";
+  };
+  draw();
+
+  $("#cancel-ideas").addEventListener("click", (e) => {
+    const el = e.target.closest("[data-idea]");
+    if (!el) return;
+    const i = Number(el.dataset.idea);
+    picked.has(i) ? picked.delete(i) : picked.add(i);
+    draw();
+  });
+  $("#cancel-save").addEventListener("click", async () => {
+    await setDayType(kid, t, "none", "Aflyst");
+    for (const i of picked) await setDayType(kid, ideas[i].date, ideas[i].to, "Ekstra læsetid");
+    sync();
+    closeSheet();
+  });
+}
+
+// Gem en undtagelse for én dag (erstatter en tidligere undtagelse samme dag).
+async function setDayType(kid, date, type, label) {
+  const existing = rulesOf(kid.id).filter((r) => r.kind === "day" && r.from_date === date);
+  for (const r of existing.slice(1)) await Store.remove("day_rules", r.id);
+  await Store.put("day_rules", { id: existing[0]?.id, kid_id: kid.id, kind: "day", from_date: date, to_date: null, weekday: null, day_type: type, label });
+}
+
+// ============================================================
+// Siden sidst: læsedage, hvor der ikke er registreret noget
+// ============================================================
+
+let catchupDone = false;
+
+// Læsedage siden sidste besøg (til og med i går), hvor der ikke er gemt en læsning.
+function missedDays(kid) {
+  const s = settingsOf(kid);
+  if (!s.lastSeen) return [];
+  const rules = rulesOf(kid.id);
+  const logged = new Set(Store.all("sessions", (x) => x.kid_id === kid.id).map((x) => localDay(x.studied_at)));
+  const out = [];
+  const from = Planner.addDays(s.lastSeen, 1) > Planner.addDays(today(), -14) ? Planner.addDays(s.lastSeen, 1) : Planner.addDays(today(), -14);
+  for (let d = from; d < today(); d = Planner.addDays(d, 1)) {
+    if (Planner.dayType(d, rules, s.week) !== "none" && !logged.has(d)) out.push(d);
+  }
+  return out;
+}
+
+async function markSeen(kid) {
+  const k = Store.get("kids", kid.id);
+  if (settingsOf(k).lastSeen === today()) return;
+  await save("kids", { id: k.id, settings: { ...(k.settings || {}), lastSeen: today() } });
+}
+
+function maybeCatchup(kid) {
+  if (catchupDone || !kid || $("#sheet").open) return;
+  catchupDone = true;
+  const days = missedDays(kid).filter((d) => planWith(kid, { day: d }).today.items.length);
+  if (days.length) catchupSheet(kid, days);
+  else markSeen(kid);
+}
+
+// Én dag ad gangen: hvad var planlagt den dag, og blev det læst?
+function catchupSheet(kid, days) {
+  let i = 0;
+  const step = () => {
+    if (i >= days.length) return finish();
+    const d = days[i];
+    const items = planWith(kid, { day: d }).today.items;
+    if (!items.length) {
+      i++;
+      return step();
+    }
+    const type = planWith(kid, { day: d }).typeOf(d);
+    openSheet(`
+      <span class="muted small">${days.length > 1 ? `Dag ${i + 1} af ${days.length} · ` : ""}Siden du sidst var inde</span>
+      <h2>Fik du læst ${longDate(d).toLowerCase()}?</h2>
+      <div class="row small">${typeSwatch(type)}<span class="muted">${TYPES[type].label}. Planlagt:</span></div>
+      <div class="stack" style="gap:8px;margin:8px 0 12px">${items.map((it) => {
+        const b = Store.get("books", it.bookId);
+        return `<div class="card item"><span class="swatch" style="background:${bookColor(b)}"></span>
+          <div class="grow"><strong>${escapeHtml(b.title)}</strong><p class="muted small">s. ${Planner.piecesText(it.pieces)} · ${formatMinutes(it.minutes)}</p></div></div>`;
+      }).join("")}</div>
+      <div class="seg three" role="group" aria-label="Svar">
+        <label><input type="radio" name="ans" value="yes"><span>Ja, alt</span></label>
+        <label><input type="radio" name="ans" value="part"><span>Noget</span></label>
+        <label><input type="radio" name="ans" value="no"><span>Nej</span></label>
+      </div>
+      <form id="part-form" class="stack" style="margin-top:12px" hidden>
+        ${items.map((it, n) => {
+          const b = Store.get("books", it.bookId);
+          return `<div class="card stack" style="gap:6px"><strong class="small">${escapeHtml(b.title)}</strong>
+            <div class="grid-2"><label>Nåede til side<input name="page${n}" type="number" inputmode="numeric" placeholder="${it.fromPage}-${it.toPage}"></label>
+            <label>Minutter<input name="min${n}" type="number" inputmode="numeric" min="1"></label></div></div>`;
+        }).join("")}
+        <button class="primary">Gem</button>
+      </form>`);
+    const logItem = async (it, page, minutes) => {
+      const b = Store.get("books", it.bookId);
+      const end = Math.min(page, Planner.rangesOf(b).at(-1).to);
+      const pages = Planner.pagesBetween(b, it.fromPage, end);
+      if (pages < 1) return;
+      await Store.put("sessions", { kid_id: kid.id, book_id: b.id, start_page: it.fromPage, end_page: end, pages, minutes: Math.max(1, minutes || Math.round(pages * it.minutes / it.pages)), studied_at: new Date(d + "T12:00:00").toISOString() });
+      await Store.put("books", { id: b.id, current_page: Math.max(b.current_page ?? -1, end) });
+    };
+    $("#sheet-body").addEventListener("change", async (e) => {
+      if (e.target.name !== "ans") return;
+      if (e.target.value === "part") return ($("#part-form").hidden = false);
+      if (e.target.value === "yes") for (const it of items) await logItem(it, it.toPage, it.minutes);
+      i++;
+      step();
+    });
+    $("#part-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const f = e.target.elements;
+      for (const [n, it] of items.entries()) {
+        const page = Number(f["page" + n].value);
+        if (page) await logItem(it, page, Number(f["min" + n].value));
+      }
+      i++;
+      step();
+    });
+  };
+  const finish = async () => {
+    await markSeen(kid);
+    sync();
+    const check = planFor(kid).check;
+    openSheet(`
+      <h2>Planen er rettet</h2>
+      <p class="muted small">Alt der ikke blev læst, er flyttet frem i planen.</p>
+      ${checkCard(check)}
+      <div class="row" style="margin-top:12px">
+        ${check.status === "ok" ? '<button class="primary grow" data-action="close">Videre til i dag</button>'
+          : `<button class="grow" data-action="close">Senere</button><a class="button primary grow" href="#/kid/${kid.id}/time" id="go-time">Find mere læsetid</a>`}
+      </div>`);
+    $("#go-time")?.addEventListener("click", () => $("#sheet").close());
+  };
+  step();
 }
 
 // ============================================================
@@ -1124,6 +1357,7 @@ $("#app").addEventListener("click", async (e) => {
   else if (action === "edit-book") bookSheet(kid, id && Store.get("books", id), el.dataset.subject);
   else if (action === "log-session") logSheet(kid, Store.get("books", id));
   else if (action === "new-rule") ruleSheet(kid);
+  else if (action === "cancel-today") cancelSheet(kid);
   else if (action === "delete-rule") {
     const r = Store.get("day_rules", id);
     if (r && confirm(`Slet reglen "${r.label || ruleKindName(r)}"?`)) await removeRow("day_rules", id);
@@ -1148,7 +1382,7 @@ $("#app").addEventListener("submit", async (e) => {
     name: f.name.value.trim(),
     grade: f.grade.value.trim() || null,
     color: COLORS[Math.floor(Math.random() * COLORS.length)],
-    settings: { fullHours: 4, halfHours: 2, week: [...Planner.DEFAULT_WEEK] },
+    settings: { fullHours: 4, halfHours: 2, week: [...Planner.DEFAULT_WEEK], lastSeen: today() },
   });
   go(`#/kid/${kid.id}/books`);
 });
@@ -1229,6 +1463,7 @@ async function onSignedIn(newUser) {
   }
   render();
   await sync();
+  synced = true;
   render();
 }
 

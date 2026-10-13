@@ -3,6 +3,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const P = require("../planner.js");
 
+// Planlæg én profil. Standard: fuld dag 1 t (54 min fyldes), halv dag 30 min (27 fyldes),
+// og en målt fart på 1 min pr. side.
+const ONE_MIN = [{ kid_id: "k", book_id: "x", start_page: 1, end_page: 100, minutes: 100, studied_at: "2026-10-01T10:00:00Z" }];
+const plan = ({ books, rules = [], sessions = ONE_MIN, today = "2026-10-14", settings = { fullHours: 1, halfHours: 0.5 }, curricula = [] }) =>
+  P.planKid({ kid: { id: "k", settings }, curricula, books: books.map((b) => ({ kid_id: "k", ...b })), sessions, rules, today });
+
 const session = (start, end, minutes, date = "2026-10-12", extra = {}) =>
   ({ start_page: start, end_page: end, minutes, studied_at: date + "T15:00:00Z", kid_id: "k", ...extra });
 
@@ -40,48 +46,10 @@ test("tekstens egen frist går forud for fagets, men aldrig senere", () => {
   assert.equal(P.deadlineFor({ deadline: "2027-01-10" }, subject), "2026-12-18");
 });
 
-test("resten af bogen fordeles jævnt frem til fristen", () => {
-  const book = { id: "b", from_page: 1, to_page: 120, current_page: 44, deadline: "2026-10-23" };
-  const plan = P.planBook(book, { minPerPage: 2, today: "2026-10-14" });
-  assert.equal(plan.status, "ok");
-  assert.equal(plan.remaining, 76);
-  assert.equal(plan.days.length, 8);
-  assert.equal(plan.days[0].fromPage, 45);
-  assert.equal(plan.days.at(-1).toPage, 120);
-  assert.equal(plan.days.reduce((s, d) => s + (d.toPage - d.fromPage + 1), 0), 76);
-});
 
-test("har barnet læst i dag, starter planen i morgen", () => {
-  const book = { id: "b", from_page: 1, to_page: 10, current_page: 0, deadline: "2026-10-16" };
-  const plan = P.planBook(book, { minPerPage: 1, today: "2026-10-14", readToday: true });
-  assert.equal(plan.days[0].date, "2026-10-15");
-});
 
-test("overskredet frist lægger resten i dag og markeres som for sent", () => {
-  const book = { id: "b", from_page: 1, to_page: 10, current_page: 4, deadline: "2026-10-01" };
-  const plan = P.planBook(book, { minPerPage: 2, today: "2026-10-14" });
-  assert.equal(plan.status, "late");
-  assert.equal(plan.days.length, 1);
-  const [d] = plan.days;
-  assert.deepEqual([d.date, d.fromPage, d.toPage, d.minutes], ["2026-10-14", 5, 10, 12]);
-});
 
-test("en færdig bog har ingen plan", () => {
-  const plan = P.planBook({ from_page: 1, to_page: 10, current_page: 10 }, { minPerPage: 2, today: "2026-10-14" });
-  assert.equal(plan.status, "done");
-});
 
-test("planen bliver mere realistisk når barnet læser langsommere end gættet", () => {
-  const kid = { id: "k", settings: { fullHours: 0.5 } };
-  const curricula = [{ id: "c", deadline: "2026-12-18" }];
-  const books = [{ id: "b", kid_id: "k", curriculum_id: "c", from_page: 1, to_page: 120, current_page: 44, deadline: "2026-10-23" }];
-  const before = P.planKid({ kid, curricula, books, sessions: [], today: "2026-10-14" });
-  const slow = [session(30, 44, 60, "2026-10-13", { book_id: "b" })];
-  const after = P.planKid({ kid, curricula, books, sessions: slow, today: "2026-10-14" });
-  assert.ok(after.today.minutes > before.today.minutes);
-  assert.equal(before.atRisk, false);
-  assert.equal(after.atRisk, true);
-});
 
 // ---------- Læsetid ----------
 
@@ -113,31 +81,8 @@ test("ældre profiler med læsedage får en normal uge", () => {
   assert.deepEqual(s.week, ["full", "full", "full", "full", "full", "full", "full"]);
 });
 
-test("halve dage får halvt så mange sider som fulde", () => {
-  // Ons 14. fuld, tor 15. halv, fre 16. fuld.
-  const typeOf = (d) => ({ "2026-10-15": "half" }[d] ?? P.DEFAULT_WEEK[P.weekday(d)]);
-  const book = { id: "b", from_page: 1, to_page: 50, deadline: "2026-10-16" };
-  const plan = P.planBook(book, { minPerPage: 2, today: "2026-10-14", typeOf });
-  assert.deepEqual(plan.days.map((d) => [d.date, d.pages]), [["2026-10-14", 20], ["2026-10-15", 10], ["2026-10-16", 20]]);
-});
 
-test("fri dage får ingen læsning", () => {
-  const book = { id: "b", from_page: 1, to_page: 30, deadline: "2026-10-19" };
-  const plan = P.planBook(book, { minPerPage: 1, today: "2026-10-16" });
-  assert.deepEqual(plan.days.map((d) => d.date), ["2026-10-16", "2026-10-19"]);
-});
 
-test("for meget læsning på en halv dag gør planen stram", () => {
-  const kid = { id: "k", settings: { fullHours: 4, halfHours: 0.25 } };
-  const books = [{ id: "b", kid_id: "k", from_page: 1, to_page: 40, deadline: "2026-10-15" }];
-  const rules = [rule("day", { from_date: "2026-10-15", day_type: "half" })];
-  // Ons 14. er fuld, tor 15. halv: 27 + 13 sider à 2 min. 26 min > 15 min på den halve dag.
-  const plan = P.planKid({ kid, curricula: [], books, sessions: [], rules, today: "2026-10-14" });
-  const thu = plan.days.find((d) => d.date === "2026-10-15");
-  assert.equal(thu.dayType, "half");
-  assert.equal(thu.tooMuch, true);
-  assert.equal(plan.atRisk, true);
-});
 
 // ---------- Sideintervaller ----------
 
@@ -153,19 +98,114 @@ test("flere sideintervaller: kun siderne i intervallerne tæller", () => {
   assert.equal(P.stepPage(book, 211, -1), 148);
 });
 
-test("planen springer siderne mellem intervallerne over", () => {
-  const book = { id: "b", from_page: 1, to_page: 30, ranges: [{ from: 1, to: 10 }, { from: 21, to: 30 }], deadline: "2026-10-15" };
-  const plan = P.planBook(book, { minPerPage: 1, today: "2026-10-14" });
-  assert.equal(plan.days.length, 2);
-  assert.deepEqual(plan.days[0].pieces, [{ from: 1, to: 10 }]);
-  assert.deepEqual(plan.days[1].pieces, [{ from: 21, to: 30 }]);
-  const odd = P.planBook({ ...book, current_page: 5 }, { minPerPage: 1, today: "2026-10-15" });
-  assert.deepEqual(odd.days[0].pieces, [{ from: 6, to: 10 }, { from: 21, to: 30 }]);
-  assert.equal(odd.days[0].minutes, 15);
-  assert.equal(P.piecesText(odd.days[0].pieces), "6-10 og 21-30");
-});
 
 test("læsefart bruger antal læste sider, når det er gemt", () => {
   const p = P.pace([session(140, 215, 28, "2026-10-12", { pages: 14 })]);
   assert.equal(p.minPerPage, 2);
+});
+
+// ---------- Planen: tidligste frist først, dagene fyldes til 90 % ----------
+
+test("dagene fyldes op til 90 % i stedet for at sprede teksten", () => {
+  // 1 min pr. side, fuld dag 60 min -> 54 sider pr. dag. Fristen er langt ude.
+  const p = plan({ books: [{ id: "b", from_page: 1, to_page: 100, deadline: "2026-12-18" }] });
+  const days = p.plans[0].days;
+  assert.deepEqual(days.map((d) => [d.date, d.pages]), [["2026-10-14", 54], ["2026-10-15", 46]]);
+  assert.equal(p.plans[0].finish, "2026-10-15");
+  assert.equal(p.plans[0].status, "ok");
+});
+
+test("teksten med tidligste frist læses først", () => {
+  const books = [
+    { id: "late", from_page: 1, to_page: 54, deadline: "2026-12-01", created_at: "1" },
+    { id: "soon", from_page: 1, to_page: 60, deadline: "2026-10-20", created_at: "2" },
+  ];
+  const p = plan({ books });
+  assert.deepEqual(p.today.items.map((i) => [i.bookId, i.pages]), [["soon", 54]]);
+  const thu = p.days.find((d) => d.date === "2026-10-15");
+  assert.deepEqual(thu.items.map((i) => [i.bookId, i.pages]), [["soon", 6], ["late", 48]]);
+});
+
+test("halve dage fyldes halvt, fri dage springes over", () => {
+  // Ons 14. halv (27 min), tor 15. fuld (54), fre 16. fuld, lør-søn fri.
+  const rules = [rule("day", { from_date: "2026-10-14", day_type: "half" })];
+  const p = plan({ books: [{ id: "b", from_page: 1, to_page: 200, deadline: "2026-12-18" }], rules });
+  assert.deepEqual(p.plans[0].days.slice(0, 4).map((d) => [d.date, d.pages]),
+    [["2026-10-14", 27], ["2026-10-15", 54], ["2026-10-16", 54], ["2026-10-19", 54]]);
+});
+
+test("læsning i dag trækkes fra dagens læsetid", () => {
+  const sessions = [session(1, 20, 40, "2026-10-14", { book_id: "b", studied_at: "2026-10-14T09:00:00" })];
+  const p = plan({ books: [{ id: "b", from_page: 1, to_page: 100, current_page: 20, deadline: "2026-12-18" }], sessions });
+  // 54 - 40 = 14 minutter tilbage i dag; farten er 2 min pr. side -> 7 sider.
+  assert.equal(p.today.items[0].pages, 7);
+});
+
+test("planen springer siderne mellem intervallerne over", () => {
+  const book = { id: "b", from_page: 1, to_page: 30, ranges: [{ from: 1, to: 10 }, { from: 21, to: 30 }], deadline: "2026-10-20" };
+  const p = plan({ books: [{ ...book, current_page: 5 }] });
+  assert.deepEqual(p.today.items[0].pieces, [{ from: 6, to: 10 }, { from: 21, to: 30 }]);
+  assert.equal(P.piecesText(p.today.items[0].pieces), "6-10 og 21-30");
+});
+
+test("bufferen bruges, når 90 % ikke rækker til fristen", () => {
+  // Ons-tor: 2 fulde dage = 120 min. 115 sider kan ikke nås med 2 x 54, men med 2 x 60.
+  const p = plan({ books: [{ id: "b", from_page: 1, to_page: 115, deadline: "2026-10-15" }] });
+  assert.equal(p.usedBuffer, true);
+  assert.equal(p.plans[0].status, "ok");
+  assert.equal(p.check.status, "tight");
+});
+
+test("overskredet frist lægger resten i dag", () => {
+  const p = plan({ books: [{ id: "b", from_page: 1, to_page: 10, current_page: 4, deadline: "2026-10-01" }] });
+  assert.equal(p.plans[0].status, "late");
+  assert.deepEqual([p.today.items[0].fromPage, p.today.items[0].toPage], [5, 10]);
+  assert.equal(p.check.status, "short");
+});
+
+test("en færdig tekst har ingen plan", () => {
+  const p = plan({ books: [{ id: "b", from_page: 1, to_page: 10, current_page: 10, deadline: "2026-12-01" }] });
+  assert.equal(p.plans[0].status, "done");
+});
+
+// ---------- Tidskontrol ----------
+
+test("tidskontrol: god plads, tæt på og ikke nok tid", () => {
+  // Ons 14. - fre 16.: 3 fulde dage = 180 min læsetid.
+  const check = (pages) => plan({ books: [{ id: "b", from_page: 1, to_page: pages, deadline: "2026-10-16" }] }).check;
+  assert.equal(check(160).status, "ok");      // 160 + 16 = 176 <= 180
+  assert.equal(check(170).status, "tight");   // 170 <= 180 < 187
+  assert.equal(check(190).status, "short");   // 190 > 180
+  const c = check(170).worst;
+  assert.deepEqual([c.deadline, c.need, c.buffer, c.capacity], ["2026-10-16", 170, 17, 180]);
+});
+
+test("tidskontrollen tjekker frist for frist", () => {
+  // Rigeligt tid til januar, men for lidt til fredag.
+  const books = [
+    { id: "a", from_page: 1, to_page: 200, deadline: "2026-10-16" },
+    { id: "b", from_page: 1, to_page: 50, deadline: "2027-01-10" },
+  ];
+  const p = plan({ books });
+  assert.equal(p.check.status, "short");
+  assert.equal(p.check.worst.deadline, "2026-10-16");
+  assert.equal(p.plans.find((x) => x.bookId === "a").status, "short");
+});
+
+test("en aflyst dag kan gøre planen stram", () => {
+  const books = [{ id: "b", from_page: 1, to_page: 150, deadline: "2026-10-16" }];
+  assert.equal(plan({ books }).check.status, "ok");
+  const rules = [rule("day", { from_date: "2026-10-15", day_type: "none" })];
+  assert.equal(plan({ books, rules }).check.status, "short");
+});
+
+test("fagets status følger tidskontrollen ved fagets frister", () => {
+  const curricula = [{ id: "s1", deadline: "2026-10-16" }, { id: "s2", deadline: "2027-01-10" }];
+  const books = [
+    { id: "a", kid_id: "k", curriculum_id: "s1", from_page: 1, to_page: 170 },
+    { id: "b", kid_id: "k", curriculum_id: "s2", from_page: 1, to_page: 50 },
+  ];
+  const p = plan({ books, curricula });
+  assert.equal(P.subjectStatus("s1", books, p).status, "tight");
+  assert.equal(P.subjectStatus("s2", books, p).status, "ok");
 });

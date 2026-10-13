@@ -5,8 +5,9 @@
 // skal være læst. En tekst kan have sin egen, tidligere frist. Teksten består
 // af et eller flere sideintervaller (fx s. 112-148 og 211-310).
 // Hver dag er en fuld, halv eller fri læsedag. Læsefarten (minutter pr. side)
-// måles ud fra de seneste læsninger, og resten af hver tekst fordeles på
-// læsedagene frem til fristen: en fuld dag tæller 1, en halv dag 0,5.
+// måles ud fra de seneste læsninger. Teksten med tidligste frist læses først,
+// og hver dag fyldes op til 90 % af læsetiden. Tidskontrollen holder øje med,
+// om læsetiden rækker til alt, der skal læses, plus 10 % buffer.
 
 (function (root) {
   const DEFAULT_MIN_PER_PAGE = 2;   // gæt indtil man har læst et par gange
@@ -191,46 +192,72 @@
     return own || all;
   }
 
-  // ---------- Plan for én tekst ----------
+  // ---------- Planen ----------
 
-  // Fordel resten af teksten på læsedagene frem til fristen, vægtet efter
-  // dagstypen. `today` tæller med, medmindre der allerede er læst i teksten i dag.
-  // typeOf(date) giver "full", "half" eller "none" (standard: hverdage fuld).
-  function planBook(book, { curriculum, minPerPage, today, typeOf, readToday = false }) {
-    typeOf ??= (d) => DEFAULT_WEEK[weekday(d)];
-    const deadline = deadlineFor(book, curriculum);
-    const remaining = remainingPages(book);
-    const base = { bookId: book.id, deadline, remaining, totalMinutes: Math.ceil(remaining * minPerPage) };
-    if (remaining <= 0) return { ...base, status: "done", days: [] };
-    if (!deadline) return { ...base, status: "no-deadline", days: [] };
+  const FILL = 0.9;          // dagene fyldes op til 90 % af læsetiden …
+  const BUFFER = 0.1;        // … så der er 10 % luft til nye tekster og aflysninger
+  const HORIZON_DAYS = 400;  // så langt frem planlægges der højst
 
-    const start = readToday ? addDays(today, 1) : today;
-    const dates = [];
-    for (let d = start; d <= deadline; d = addDays(d, 1)) {
+  // Fordel alle tekster på læsedagene: teksten med tidligste frist læses først,
+  // og hver dag fyldes op til 90 % af dens læsetid. En tekst kan derfor blive
+  // læst færdig længe før fristen. Rækker 90 % ikke til at nå fristerne, bruges
+  // hele læsetiden (bufferen) i stedet.
+  // Tekster uden frist planlægges ikke. Er en frist allerede overskredet,
+  // lægges resten af teksten i dag.
+  function schedule({ books, paceOf, subjectOf, today, typeOf, settings, usedToday = 0 }) {
+    const first = scheduleWith(FILL, { books, paceOf, subjectOf, today, typeOf, settings, usedToday });
+    if (!first.plans.some((p) => p.status === "short")) return { ...first, usedBuffer: false };
+    const full = scheduleWith(1, { books, paceOf, subjectOf, today, typeOf, settings, usedToday });
+    return { ...full, usedBuffer: true };
+  }
+
+  function scheduleWith(fill, { books, paceOf, subjectOf, today, typeOf, settings, usedToday }) {
+    const plans = {};
+    const queue = [];
+    for (const b of books) {
+      const deadline = deadlineFor(b, subjectOf(b));
+      const remaining = remainingPages(b);
+      const mpp = paceOf(b);
+      const plan = { bookId: b.id, deadline, remaining, minPerPage: mpp, totalMinutes: Math.ceil(remaining * mpp), days: [], status: "ok", finish: null };
+      plans[b.id] = plan;
+      if (remaining <= 0) plan.status = "done";
+      else if (!deadline) plan.status = "no-deadline";
+      else queue.push({ book: b, plan, left: remaining, page: nextPage(b), late: deadline < today });
+    }
+    queue.sort((x, y) => (x.plan.deadline < y.plan.deadline ? -1 : x.plan.deadline > y.plan.deadline ? 1 : 0)
+      || ((x.book.created_at ?? "") < (y.book.created_at ?? "") ? -1 : 1));
+
+    const place = (q, date, type, count) => {
+      const item = day(q.book, date, type, q.page, count, q.plan.minPerPage);
+      q.plan.days.push(item);
+      q.left -= item.pages;
+      q.page = item.pages ? stepPage(q.book, item.toPage, 1) : q.page;
+      q.plan.finish = date;
+    };
+
+    // Overskredne frister: alt lægges i dag.
+    for (const q of queue.filter((q) => q.late)) {
+      q.plan.status = "late";
+      place(q, today, typeOf(today), q.left);
+    }
+
+    const open = queue.filter((q) => !q.late);
+    for (let i = 0, d = today; i < HORIZON_DAYS && open.some((q) => q.left > 0); i++, d = addDays(d, 1)) {
       const type = typeOf(d);
-      if (WEIGHT[type] > 0) dates.push({ date: d, type, weight: WEIGHT[type] });
+      let room = capacityMinutes(type, settings) * fill - (d === today ? usedToday : 0);
+      for (const q of open) {
+        if (room <= 0) break;
+        if (q.left <= 0) continue;
+        const count = Math.min(q.left, Math.floor(room / q.plan.minPerPage + 1e-9));
+        if (count <= 0) continue;
+        place(q, d, type, count);
+        room -= count * q.plan.minPerPage;
+      }
     }
-    if (!dates.length) {
-      // Fristen er overskredet, eller der er ingen læsetid tilbage: alt lægges i dag.
-      return { ...base, status: "late", days: [day(book, today, typeOf(today), nextPage(book), remaining, minPerPage)] };
+    for (const q of open) {
+      if (q.left > 0 || q.plan.finish > q.plan.deadline) q.plan.status = "short";
     }
-
-    const sum = dates.reduce((n, d) => n + d.weight, 0);
-    const days = [];
-    let page = nextPage(book);
-    let done = 0;
-    let acc = 0;
-    for (const d of dates) {
-      acc += d.weight;
-      const target = Math.round((remaining * acc) / sum);
-      const count = target - done;
-      if (count <= 0) continue;
-      const item = day(book, d.date, d.type, page, count, minPerPage);
-      days.push(item);
-      done = target;
-      page = stepPage(book, item.toPage, 1);
-    }
-    return { ...base, status: "ok", days };
+    return { plans: books.map((b) => plans[b.id]) };
   }
 
   function day(book, date, type, start, count, minPerPage) {
@@ -238,15 +265,47 @@
     const pages = pieces.reduce((n, p) => n + p.to - p.from + 1, 0);
     return {
       date, dayType: type, pieces, pages,
-      fromPage: pieces[0].from, toPage: pieces[pieces.length - 1].to,
+      fromPage: pieces[0]?.from ?? start, toPage: pieces[pieces.length - 1]?.to ?? start,
       minutes: Math.max(1, Math.round(pages * minPerPage)),
     };
   }
 
+  // Tidskontrol: rækker læsetiden i kalenderen til alt det, der skal læses,
+  // plus 10 % buffer? Det tjekkes frist for frist, så tekster med en tidlig
+  // frist ikke skjules af god plads længere ude.
+  //   ok    = læsetid ≥ behov + 10 %
+  //   tight = læsetid ≥ behov, men bufferen er spist
+  //   short = læsetid < behov
+  function timeCheck(plans, { today, typeOf, settings, usedToday = 0 }) {
+    const open = plans.filter((p) => p.remaining > 0 && p.deadline);
+    const lateNeed = open.filter((p) => p.deadline < today).reduce((n, p) => n + remainingMinutes(p), 0);
+    const deadlines = [...new Set(open.map((p) => p.deadline).filter((d) => d >= today))].sort();
+    const checks = [];
+    let cap = -usedToday;
+    let d = today;
+    for (const deadline of deadlines) {
+      for (; d <= deadline; d = addDays(d, 1)) cap += capacityMinutes(typeOf(d), settings);
+      const need = lateNeed + open.filter((p) => p.deadline <= deadline).reduce((n, p) => n + remainingMinutes(p), 0);
+      const buffer = Math.round(need * BUFFER);
+      const capacity = Math.max(0, cap);
+      const status = capacity < need ? "short" : capacity < need + buffer ? "tight" : "ok";
+      checks.push({ deadline, need, buffer, capacity, status, spare: capacity - need - buffer });
+    }
+    if (lateNeed && !checks.length) {
+      checks.push({ deadline: today, need: lateNeed, buffer: 0, capacity: 0, status: "short", spare: -lateNeed });
+    }
+    const rank = { ok: 0, tight: 1, short: 2 };
+    const worst = checks.reduce((w, c) => (!w || rank[c.status] > rank[w.status] || (rank[c.status] === rank[w.status] && c.spare < w.spare) ? c : w), null);
+    return { status: lateNeed ? "short" : worst?.status ?? "ok", worst, checks };
+  }
+
+  function remainingMinutes(plan) {
+    return Math.ceil(plan.remaining * plan.minPerPage);
+  }
+
   // ---------- Plan for en profil ----------
 
-  // Samler alle tekster til en dagsplan og markerer dage, hvor der er planlagt
-  // mere, end dagstypen giver tid til.
+  // Samler alle tekster til en dagsplan med tidskontrol.
   function planKid({ kid, curricula, books, sessions, rules = [], today }) {
     const settings = settingsOf(kid);
     const myRules = rules.filter((r) => r.kid_id === kid.id && !r.deleted);
@@ -255,19 +314,22 @@
     const kidSessions = sessions.filter((s) => s.kid_id === kid.id && !s.deleted);
     const p = pace(kidSessions);
     const byId = Object.fromEntries(curricula.filter((c) => !c.deleted).map((c) => [c.id, c]));
+    const usedToday = kidSessions
+      .filter((s) => s.studied_at && toIso(new Date(s.studied_at)) === today)
+      .reduce((n, s) => n + (s.minutes || 0), 0);
+    const myBooks = books.filter((b) => b.kid_id === kid.id && !b.deleted);
 
-    const plans = books
-      .filter((b) => b.kid_id === kid.id && !b.deleted)
-      .map((b) => planBook(b, {
-        curriculum: byId[b.curriculum_id],
-        minPerPage: bookPace(b, kidSessions, p),
-        today,
-        typeOf,
-        readToday: kidSessions.some((s) => s.book_id === b.id && s.studied_at && toIso(new Date(s.studied_at)) === today),
-      }));
+    const { plans, usedBuffer } = schedule({
+      books: myBooks,
+      paceOf: (b) => bookPace(b, kidSessions, p),
+      subjectOf: (b) => byId[b.curriculum_id],
+      today, typeOf, settings, usedToday,
+    });
 
+    // I hver dag står teksterne i den rækkefølge, de skal læses: tidligste frist først.
+    const ordered = [...plans].sort((a, b) => ((a.deadline ?? "9999") < (b.deadline ?? "9999") ? -1 : (a.deadline ?? "9999") > (b.deadline ?? "9999") ? 1 : 0));
     const calendar = {};
-    for (const plan of plans) {
+    for (const plan of ordered) {
       for (const d of plan.days) {
         (calendar[d.date] ??= { date: d.date, minutes: 0, items: [] });
         calendar[d.date].minutes += d.minutes;
@@ -278,29 +340,42 @@
     for (const d of days) {
       d.dayType = typeOf(d.date);
       d.capacity = capacityMinutes(d.dayType, settings);
-      d.tooMuch = d.minutes > d.capacity;
+      d.used = d.date === today ? usedToday : 0;
+      d.tooMuch = d.minutes + d.used > d.capacity;
     }
 
-    const atRisk = plans.some((pl) => pl.status === "late") || days.some((d) => d.tooMuch);
+    const check = timeCheck(plans, { today, typeOf, settings, usedToday });
+    const atRisk = check.status === "short";
     const todayEntry = calendar[today] ?? { date: today, minutes: 0, items: [] };
     todayEntry.dayType = typeOf(today);
     todayEntry.capacity = capacityMinutes(todayEntry.dayType, settings);
-    return { pace: p, plans, days, today: todayEntry, atRisk, typeOf, settings };
+    todayEntry.used = usedToday;
+    return { pace: p, plans, days, today: todayEntry, atRisk, check, usedBuffer, usedToday, typeOf, settings };
   }
 
-  // Status for et fag: done, late (fristen er nået), tight (nogle dage er for
-  // tunge) eller ok.
+  // Status for et fag: done, none (ingen frist), eller tidskontrollens status
+  // ved fagets frister (ok, tight, short).
   function subjectStatus(subjectId, books, kidPlan) {
     const mine = books.filter((b) => b.curriculum_id === subjectId && !b.deleted);
     const plans = kidPlan.plans.filter((p) => mine.some((b) => b.id === p.bookId));
     const total = mine.reduce((n, b) => n + totalPages(b), 0);
     const read = mine.reduce((n, b) => n + pagesUpTo(b, b.current_page ?? null), 0);
-    const heavy = new Set(kidPlan.days.filter((d) => d.tooMuch).map((d) => d.date));
+    const open = plans.filter((p) => p.status !== "done");
     let status = "ok";
-    if (mine.length && plans.every((p) => p.status === "done")) status = "done";
-    else if (plans.some((p) => p.status === "late")) status = "late";
-    else if (plans.some((p) => p.days.some((d) => heavy.has(d.date)))) status = "tight";
-    return { total, read, status, books: mine };
+    let check = null;
+    if (mine.length && !open.length) status = "done";
+    else if (!open.some((p) => p.deadline)) status = "none";
+    else if (open.some((p) => p.status === "late")) status = "short";
+    else {
+      const rank = { ok: 0, tight: 1, short: 2 };
+      for (const c of kidPlan.check.checks) {
+        if (!open.some((p) => p.deadline === c.deadline)) continue;
+        if (!check || rank[c.status] > rank[check.status]) check = c;
+      }
+      status = check?.status ?? "ok";
+    }
+    const finish = open.reduce((f, p) => (p.finish && (!f || p.finish > f) ? p.finish : f), null);
+    return { total, read, status, check, finish, books: mine };
   }
 
   // Har man læst nok i netop denne tekst, bruges tekstens egen fart
@@ -315,7 +390,7 @@
     toIso, addDays, weekday, settingsOf, capacityMinutes,
     ruleMatches, dayType, dayTypeInfo,
     rangesOf, totalPages, pagesUpTo, pagesBetween, nextPage, remainingPages, stepPage, takePages, piecesText,
-    pace, pagesRead, deadlineFor, planBook, planKid, subjectStatus,
+    pace, pagesRead, deadlineFor, schedule, timeCheck, planKid, subjectStatus, FILL, BUFFER,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Planner = api;
