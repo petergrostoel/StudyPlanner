@@ -4,5 +4,5 @@
 // Findes i Supabase: Project Settings → API.
 window.STUDY_PLANNER_CONFIG = {
   supabaseUrl: "https://jtpkihbwhcsovddvghmc.supabase.co",
-  supabaseKey: "sb_publishable_INDSÆT_NØGLE",
+  supabaseKey: "sb_publishable_-WcVvw9v6xVvLlPmywndVQ_KPP3Zmiu",
 };
