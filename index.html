@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Studieplan</title>
+  <meta name="theme-color" content="#2F55D4">
+  <!-- iPhone: kør som app fra hjemmeskærmen -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Studieplan">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- ---------- Login ---------- -->
+  <section id="auth-view" class="auth-view" hidden>
+    <div class="card auth-card">
+      <h1>Studieplan</h1>
+      <p class="muted">Log ind med familiens konto. Bagefter virker appen også uden net.</p>
+      <form id="auth-form" autocomplete="on">
+        <label>E-mail<input name="email" type="email" required autocomplete="username" inputmode="email"></label>
+        <label>Adgangskode<input name="password" type="password" required minlength="8" autocomplete="current-password"></label>
+        <div class="actions">
+          <button type="submit" class="primary" data-mode="signin">Log ind</button>
+          <button type="submit" data-mode="signup">Opret konto</button>
+        </div>
+        <p id="auth-msg" class="notice" hidden></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- ---------- Appen ---------- -->
+  <main id="app" hidden></main>
+  <nav id="tabbar" class="tabbar" aria-label="Hovedmenu" hidden></nav>
+  <p id="sync-status" class="sync" aria-live="polite"></p>
+
+  <!-- ---------- Ark (formularer) ---------- -->
+  <dialog id="sheet" class="sheet"><div id="sheet-body"></div></dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+  <script src="config.js"></script>
+  <script src="planner.js"></script>
+  <script src="store.js"></script>
+  <script src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+  </script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+.claude/settings.local.json
+tools/
+supabase/.temp/
+supabase/.branches/
+node_modules/
