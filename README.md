@@ -9,7 +9,7 @@ Design og klikbar mockup: https://claude.ai/artifact/TspZ3FAYPHyMnWPK5SQurT
 
 - **Pensum med bøger:** hver profil har en liste af bøger og tekster med sidetal (fra side, til side).
 - **To slags frister:** en samlet frist for hele pensum, og en egen frist på den enkelte bog eller tekst, hvis der er en.
-- **Læsefart:** efter hver læsning skriver den studerende bare, hvilken side det nåede til, og hvor længe det læste (fokus-timeren udfylder tiden). Appen udregner farten i minutter pr. side ud fra de seneste læsninger.
+- **Læsefart:** efter hver læsning skriver man bare, hvilken side man nåede til, og hvor længe man læste (fokus-timeren udfylder tiden). Appen udregner farten i minutter pr. side ud fra de seneste læsninger.
 - **Planen retter sig selv:** resten af hver bog fordeles på læsedagene frem til fristen med den studerendes egen fart. Læser den studerende langsommere eller hurtigere end ventet, ændres planen med det samme.
 - **Nudges og fredet fritid:** "I dag" viser det næste, der skal læses, og hvornår fritiden starter. Weekenden er fri, medmindre I slår det til.
 - **Streaks:** antal dage i træk med læsning, som på de sociale medier.
