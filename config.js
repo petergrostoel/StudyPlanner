@@ -3,6 +3,6 @@
 // Læg ALDRIG secret- eller service_role-nøglen her.
 // Findes i Supabase: Project Settings → API.
 window.STUDY_PLANNER_CONFIG = {
-  supabaseUrl: "https://DIT-PROJEKT.supabase.co",
+  supabaseUrl: "https://jtpkihbwhcsovddvghmc.supabase.co",
   supabaseKey: "sb_publishable_INDSÆT_NØGLE",
 };
